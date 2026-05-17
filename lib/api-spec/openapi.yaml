@@ -2,14 +2,35 @@ openapi: 3.1.0
 info:
   # Do not change the title, if the title changes, the import paths will be broken
   title: Api
-  version: 0.1.0
-  description: API specification
+  version: 1.0.0
+  description: MCP Server for coding workflows — file editing, code execution, git, package management, and more
 servers:
   - url: /api
     description: Base API path
 tags:
   - name: health
     description: Health operations
+  - name: files
+    description: File management operations
+  - name: execution
+    description: Sandboxed code execution
+  - name: terminal
+    description: Terminal session management
+  - name: git
+    description: Git repository operations
+  - name: packages
+    description: Package management
+  - name: environment
+    description: Environment variable management
+  - name: auth
+    description: Authentication and API key management
+  - name: logs
+    description: Logging and audit trail
+  - name: monitoring
+    description: Server metrics and monitoring
+  - name: mcp
+    description: MCP protocol endpoints
+
 paths:
   /healthz:
     get:
@@ -24,13 +45,1462 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+
+  # ---- Files ----
+  /files:
+    get:
+      operationId: listFiles
+      tags: [files]
+      summary: List files in a directory
+      parameters:
+        - name: path
+          in: query
+          required: false
+          schema:
+            type: string
+            default: "."
+        - name: recursive
+          in: query
+          required: false
+          schema:
+            type: boolean
+            default: false
+        - name: pattern
+          in: query
+          required: false
+          schema:
+            type: ["string", "null"]
+      responses:
+        "200":
+          description: File listing
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/FileEntry"
+        "400":
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /files/read:
+    get:
+      operationId: readFile
+      tags: [files]
+      summary: Read file contents
+      parameters:
+        - name: path
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: encoding
+          in: query
+          required: false
+          schema:
+            type: string
+            default: utf-8
+      responses:
+        "200":
+          description: File content
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FileContent"
+        "404":
+          description: File not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /files/write:
+    post:
+      operationId: writeFile
+      tags: [files]
+      summary: Write or update a file
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/FileWrite"
+      responses:
+        "200":
+          description: File written
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FileEntry"
+        "400":
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /files/delete:
+    delete:
+      operationId: deleteFile
+      tags: [files]
+      summary: Delete a file or directory
+      parameters:
+        - name: path
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: recursive
+          in: query
+          required: false
+          schema:
+            type: boolean
+            default: false
+      responses:
+        "200":
+          description: File deleted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+        "404":
+          description: File not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /files/search:
+    get:
+      operationId: searchFiles
+      tags: [files]
+      summary: Search file contents recursively
+      parameters:
+        - name: query
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: path
+          in: query
+          required: false
+          schema:
+            type: string
+            default: "."
+        - name: filePattern
+          in: query
+          required: false
+          schema:
+            type: ["string", "null"]
+        - name: caseSensitive
+          in: query
+          required: false
+          schema:
+            type: boolean
+            default: false
+        - name: maxResults
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 50
+      responses:
+        "200":
+          description: Search results
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/SearchResult"
+
+  /files/move:
+    post:
+      operationId: moveFile
+      tags: [files]
+      summary: Move or rename a file
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/FileMove"
+      responses:
+        "200":
+          description: File moved
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FileEntry"
+        "400":
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  # ---- Execution ----
+  /execute:
+    post:
+      operationId: executeCode
+      tags: [execution]
+      summary: Execute code in a sandboxed environment
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ExecuteRequest"
+      responses:
+        "200":
+          description: Execution result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ExecutionResult"
+        "400":
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /execute/sessions:
+    get:
+      operationId: listExecutionSessions
+      tags: [execution]
+      summary: List active execution sessions
+      responses:
+        "200":
+          description: Session list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ExecutionSession"
+
+  /execute/sessions/{sessionId}:
+    delete:
+      operationId: killExecutionSession
+      tags: [execution]
+      summary: Kill an execution session
+      parameters:
+        - name: sessionId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Session killed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+        "404":
+          description: Session not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  # ---- Terminal ----
+  /terminal/sessions:
+    get:
+      operationId: listTerminalSessions
+      tags: [terminal]
+      summary: List terminal sessions
+      responses:
+        "200":
+          description: Terminal sessions
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/TerminalSession"
+    post:
+      operationId: createTerminalSession
+      tags: [terminal]
+      summary: Create a new terminal session
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TerminalSessionInput"
+      responses:
+        "201":
+          description: Terminal session created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TerminalSession"
+
+  /terminal/sessions/{sessionId}:
+    delete:
+      operationId: killTerminalSession
+      tags: [terminal]
+      summary: Kill a terminal session
+      parameters:
+        - name: sessionId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Session killed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+        "404":
+          description: Session not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /terminal/execute:
+    post:
+      operationId: terminalExecute
+      tags: [terminal]
+      summary: Execute a command in a terminal session
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TerminalCommand"
+      responses:
+        "200":
+          description: Command output
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ExecutionResult"
+        "403":
+          description: Command blocked by safety controls
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  # ---- Git ----
+  /git/status:
+    get:
+      operationId: gitStatus
+      tags: [git]
+      summary: Get git repository status
+      parameters:
+        - name: path
+          in: query
+          required: false
+          schema:
+            type: string
+            default: "."
+      responses:
+        "200":
+          description: Git status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GitStatus"
+
+  /git/log:
+    get:
+      operationId: gitLog
+      tags: [git]
+      summary: Get commit history
+      parameters:
+        - name: path
+          in: query
+          required: false
+          schema:
+            type: string
+            default: "."
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 20
+        - name: branch
+          in: query
+          required: false
+          schema:
+            type: ["string", "null"]
+      responses:
+        "200":
+          description: Commit log
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/GitCommit"
+
+  /git/branches:
+    get:
+      operationId: listGitBranches
+      tags: [git]
+      summary: List git branches
+      parameters:
+        - name: path
+          in: query
+          required: false
+          schema:
+            type: string
+            default: "."
+      responses:
+        "200":
+          description: Branch list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/GitBranch"
+
+  /git/commit:
+    post:
+      operationId: gitCommit
+      tags: [git]
+      summary: Stage and commit changes
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/GitCommitInput"
+      responses:
+        "200":
+          description: Commit result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GitCommit"
+        "400":
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /git/diff:
+    get:
+      operationId: gitDiff
+      tags: [git]
+      summary: Get diff of changes
+      parameters:
+        - name: path
+          in: query
+          required: false
+          schema:
+            type: string
+            default: "."
+        - name: staged
+          in: query
+          required: false
+          schema:
+            type: boolean
+            default: false
+        - name: file
+          in: query
+          required: false
+          schema:
+            type: ["string", "null"]
+      responses:
+        "200":
+          description: Diff content
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GitDiff"
+
+  # ---- Packages ----
+  /packages/installed:
+    get:
+      operationId: listInstalledPackages
+      tags: [packages]
+      summary: List installed packages
+      parameters:
+        - name: manager
+          in: query
+          required: false
+          schema:
+            type: string
+            default: npm
+        - name: path
+          in: query
+          required: false
+          schema:
+            type: string
+            default: "."
+      responses:
+        "200":
+          description: Package list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Package"
+
+  /packages/install:
+    post:
+      operationId: installPackage
+      tags: [packages]
+      summary: Install a package
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PackageInstallRequest"
+      responses:
+        "200":
+          description: Installation result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PackageOperationResult"
+        "400":
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /packages/uninstall:
+    post:
+      operationId: uninstallPackage
+      tags: [packages]
+      summary: Uninstall a package
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PackageUninstallRequest"
+      responses:
+        "200":
+          description: Uninstall result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PackageOperationResult"
+
+  # ---- Environment Variables ----
+  /env:
+    get:
+      operationId: listEnvVars
+      tags: [environment]
+      summary: List environment variable keys (values redacted)
+      responses:
+        "200":
+          description: Environment variable keys
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/EnvVarEntry"
+
+  /env/{key}:
+    get:
+      operationId: getEnvVar
+      tags: [environment]
+      summary: Get a specific environment variable
+      parameters:
+        - name: key
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Environment variable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EnvVarEntry"
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    put:
+      operationId: setEnvVar
+      tags: [environment]
+      summary: Set an environment variable
+      parameters:
+        - name: key
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EnvVarInput"
+      responses:
+        "200":
+          description: Environment variable set
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EnvVarEntry"
+    delete:
+      operationId: deleteEnvVar
+      tags: [environment]
+      summary: Delete an environment variable
+      parameters:
+        - name: key
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Variable deleted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  # ---- Auth ----
+  /auth/keys:
+    get:
+      operationId: listApiKeys
+      tags: [auth]
+      summary: List API keys
+      responses:
+        "200":
+          description: API key list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ApiKey"
+    post:
+      operationId: createApiKey
+      tags: [auth]
+      summary: Create a new API key
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ApiKeyInput"
+      responses:
+        "201":
+          description: API key created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiKeyWithSecret"
+
+  /auth/keys/{keyId}:
+    delete:
+      operationId: revokeApiKey
+      tags: [auth]
+      summary: Revoke an API key
+      parameters:
+        - name: keyId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Key revoked
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+        "404":
+          description: Key not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  # ---- Logs ----
+  /logs:
+    get:
+      operationId: listLogs
+      tags: [logs]
+      summary: List audit/activity logs
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 100
+        - name: offset
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 0
+        - name: level
+          in: query
+          required: false
+          schema:
+            type: ["string", "null"]
+        - name: tool
+          in: query
+          required: false
+          schema:
+            type: ["string", "null"]
+        - name: since
+          in: query
+          required: false
+          schema:
+            type: ["string", "null"]
+      responses:
+        "200":
+          description: Log entries
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LogPage"
+
+  # ---- Monitoring ----
+  /monitoring/stats:
+    get:
+      operationId: getServerStats
+      tags: [monitoring]
+      summary: Get server metrics and statistics
+      responses:
+        "200":
+          description: Server statistics
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ServerStats"
+
+  /monitoring/connections:
+    get:
+      operationId: listConnections
+      tags: [monitoring]
+      summary: List active MCP client connections
+      responses:
+        "200":
+          description: Active connections
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ConnectionInfo"
+
+  /monitoring/rate-limits:
+    get:
+      operationId: getRateLimitStatus
+      tags: [monitoring]
+      summary: Get rate limit status for all API keys
+      responses:
+        "200":
+          description: Rate limit info
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/RateLimitInfo"
+
+  /monitoring/tools:
+    get:
+      operationId: listMcpTools
+      tags: [monitoring]
+      summary: List all registered MCP tools with usage stats
+      responses:
+        "200":
+          description: MCP tool list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/McpToolInfo"
+
+  # ---- MCP Protocol ----
+  /mcp/tools:
+    get:
+      operationId: getMcpToolsManifest
+      tags: [mcp]
+      summary: Get MCP tools manifest (for Claude Desktop)
+      responses:
+        "200":
+          description: MCP tools manifest
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/McpManifest"
+
+  /mcp/tools/call:
+    post:
+      operationId: callMcpTool
+      tags: [mcp]
+      summary: Call an MCP tool
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/McpToolCall"
+      responses:
+        "200":
+          description: Tool call result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/McpToolResult"
+        "404":
+          description: Tool not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
 components:
   schemas:
     HealthStatus:
       type: object
+      required: [status]
       properties:
         status:
           type: string
-      required:
-        - status
+        uptime:
+          type: ["number", "null"]
+        version:
+          type: ["string", "null"]
+        mcpToolCount:
+          type: ["integer", "null"]
 
+    SuccessResponse:
+      type: object
+      required: [success]
+      properties:
+        success:
+          type: boolean
+        message:
+          type: ["string", "null"]
+
+    ErrorResponse:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+        details:
+          type: ["string", "null"]
+
+    # Files
+    FileEntry:
+      type: object
+      required: [name, path, type, size, modifiedAt]
+      properties:
+        name:
+          type: string
+        path:
+          type: string
+        type:
+          type: string
+          enum: [file, directory, symlink]
+        size:
+          type: integer
+        modifiedAt:
+          type: string
+        permissions:
+          type: ["string", "null"]
+
+    FileContent:
+      type: object
+      required: [path, content, size, encoding]
+      properties:
+        path:
+          type: string
+        content:
+          type: string
+        size:
+          type: integer
+        encoding:
+          type: string
+        mimeType:
+          type: ["string", "null"]
+
+    FileWrite:
+      type: object
+      required: [path, content]
+      properties:
+        path:
+          type: string
+        content:
+          type: string
+        encoding:
+          type: string
+          default: utf-8
+        createDirs:
+          type: boolean
+          default: true
+
+    FileMove:
+      type: object
+      required: [from, to]
+      properties:
+        from:
+          type: string
+        to:
+          type: string
+        overwrite:
+          type: boolean
+          default: false
+
+    SearchResult:
+      type: object
+      required: [file, line, column, match, context]
+      properties:
+        file:
+          type: string
+        line:
+          type: integer
+        column:
+          type: integer
+        match:
+          type: string
+        context:
+          type: string
+
+    # Execution
+    ExecuteRequest:
+      type: object
+      required: [language, code]
+      properties:
+        language:
+          type: string
+          enum: [node, python, bash]
+        code:
+          type: string
+        timeout:
+          type: integer
+          default: 30
+        workDir:
+          type: ["string", "null"]
+        env:
+          type: ["object", "null"]
+          additionalProperties:
+            type: string
+        args:
+          type: array
+          items:
+            type: string
+
+    ExecutionResult:
+      type: object
+      required: [stdout, stderr, exitCode, duration]
+      properties:
+        stdout:
+          type: string
+        stderr:
+          type: string
+        exitCode:
+          type: integer
+        duration:
+          type: number
+        sessionId:
+          type: ["string", "null"]
+        timedOut:
+          type: boolean
+
+    ExecutionSession:
+      type: object
+      required: [id, language, status, startedAt]
+      properties:
+        id:
+          type: string
+        language:
+          type: string
+        status:
+          type: string
+          enum: [running, idle, terminated]
+        startedAt:
+          type: string
+        lastUsedAt:
+          type: ["string", "null"]
+
+    # Terminal
+    TerminalSession:
+      type: object
+      required: [id, name, status, createdAt, shell]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        status:
+          type: string
+          enum: [active, idle, terminated]
+        createdAt:
+          type: string
+        shell:
+          type: string
+        workDir:
+          type: ["string", "null"]
+        pid:
+          type: ["integer", "null"]
+
+    TerminalSessionInput:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+        shell:
+          type: string
+          default: /bin/bash
+        workDir:
+          type: ["string", "null"]
+        env:
+          type: ["object", "null"]
+          additionalProperties:
+            type: string
+
+    TerminalCommand:
+      type: object
+      required: [command]
+      properties:
+        command:
+          type: string
+        sessionId:
+          type: ["string", "null"]
+        timeout:
+          type: integer
+          default: 30
+        workDir:
+          type: ["string", "null"]
+
+    # Git
+    GitStatus:
+      type: object
+      required: [branch, clean, staged, unstaged, untracked]
+      properties:
+        branch:
+          type: string
+        clean:
+          type: boolean
+        ahead:
+          type: integer
+        behind:
+          type: integer
+        staged:
+          type: array
+          items:
+            type: string
+        unstaged:
+          type: array
+          items:
+            type: string
+        untracked:
+          type: array
+          items:
+            type: string
+
+    GitCommit:
+      type: object
+      required: [hash, message, author, email, date]
+      properties:
+        hash:
+          type: string
+        message:
+          type: string
+        author:
+          type: string
+        email:
+          type: string
+        date:
+          type: string
+
+    GitBranch:
+      type: object
+      required: [name, current, remote]
+      properties:
+        name:
+          type: string
+        current:
+          type: boolean
+        remote:
+          type: ["string", "null"]
+        lastCommit:
+          type: ["string", "null"]
+
+    GitCommitInput:
+      type: object
+      required: [message]
+      properties:
+        message:
+          type: string
+        files:
+          type: array
+          items:
+            type: string
+        all:
+          type: boolean
+          default: false
+
+    GitDiff:
+      type: object
+      required: [diff, filesChanged, insertions, deletions]
+      properties:
+        diff:
+          type: string
+        filesChanged:
+          type: integer
+        insertions:
+          type: integer
+        deletions:
+          type: integer
+
+    # Packages
+    Package:
+      type: object
+      required: [name, version, manager]
+      properties:
+        name:
+          type: string
+        version:
+          type: string
+        manager:
+          type: string
+        description:
+          type: ["string", "null"]
+        isDev:
+          type: boolean
+
+    PackageInstallRequest:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+        version:
+          type: ["string", "null"]
+        manager:
+          type: string
+          default: npm
+        dev:
+          type: boolean
+          default: false
+        path:
+          type: string
+          default: "."
+
+    PackageUninstallRequest:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+        manager:
+          type: string
+          default: npm
+        path:
+          type: string
+          default: "."
+
+    PackageOperationResult:
+      type: object
+      required: [success, output]
+      properties:
+        success:
+          type: boolean
+        output:
+          type: string
+        duration:
+          type: number
+
+    # Environment
+    EnvVarEntry:
+      type: object
+      required: [key, redacted]
+      properties:
+        key:
+          type: string
+        value:
+          type: ["string", "null"]
+        redacted:
+          type: boolean
+        group:
+          type: ["string", "null"]
+
+    EnvVarInput:
+      type: object
+      required: [value]
+      properties:
+        value:
+          type: string
+        redacted:
+          type: boolean
+          default: false
+
+    # Auth
+    ApiKey:
+      type: object
+      required: [id, name, prefix, createdAt, lastUsedAt, permissions]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        prefix:
+          type: string
+        createdAt:
+          type: string
+        lastUsedAt:
+          type: ["string", "null"]
+        expiresAt:
+          type: ["string", "null"]
+        permissions:
+          type: array
+          items:
+            type: string
+        requestCount:
+          type: integer
+
+    ApiKeyInput:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+        permissions:
+          type: array
+          items:
+            type: string
+        expiresAt:
+          type: ["string", "null"]
+
+    ApiKeyWithSecret:
+      type: object
+      required: [id, name, prefix, key, createdAt, permissions]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        prefix:
+          type: string
+        key:
+          type: string
+        createdAt:
+          type: string
+        expiresAt:
+          type: ["string", "null"]
+        permissions:
+          type: array
+          items:
+            type: string
+
+    # Logs
+    LogEntry:
+      type: object
+      required: [id, timestamp, level, tool, message]
+      properties:
+        id:
+          type: string
+        timestamp:
+          type: string
+        level:
+          type: string
+          enum: [debug, info, warn, error]
+        tool:
+          type: string
+        message:
+          type: string
+        metadata:
+          type: ["object", "null"]
+          additionalProperties: {}
+        keyId:
+          type: ["string", "null"]
+        duration:
+          type: ["number", "null"]
+
+    LogPage:
+      type: object
+      required: [entries, total, limit, offset]
+      properties:
+        entries:
+          type: array
+          items:
+            $ref: "#/components/schemas/LogEntry"
+        total:
+          type: integer
+        limit:
+          type: integer
+        offset:
+          type: integer
+
+    # Monitoring
+    ServerStats:
+      type: object
+      required: [uptime, requestCount, errorCount, activeConnections, activeSessions, memoryUsageMb, cpuPercent, toolCallsToday]
+      properties:
+        uptime:
+          type: number
+        requestCount:
+          type: integer
+        errorCount:
+          type: integer
+        activeConnections:
+          type: integer
+        activeSessions:
+          type: integer
+        memoryUsageMb:
+          type: number
+        cpuPercent:
+          type: number
+        toolCallsToday:
+          type: integer
+        toolCallsByType:
+          type: object
+          additionalProperties:
+            type: integer
+        averageResponseMs:
+          type: number
+
+    ConnectionInfo:
+      type: object
+      required: [id, clientType, connectedAt, requestCount]
+      properties:
+        id:
+          type: string
+        clientType:
+          type: string
+        connectedAt:
+          type: string
+        lastActiveAt:
+          type: ["string", "null"]
+        requestCount:
+          type: integer
+        keyId:
+          type: ["string", "null"]
+        ipAddress:
+          type: ["string", "null"]
+
+    RateLimitInfo:
+      type: object
+      required: [keyId, keyName, requestsInWindow, requestLimit, windowSeconds, blocked]
+      properties:
+        keyId:
+          type: string
+        keyName:
+          type: string
+        requestsInWindow:
+          type: integer
+        requestLimit:
+          type: integer
+        windowSeconds:
+          type: integer
+        blocked:
+          type: boolean
+        resetAt:
+          type: ["string", "null"]
+
+    McpToolInfo:
+      type: object
+      required: [name, description, category, callCount, averageMs, lastCalledAt]
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        category:
+          type: string
+        callCount:
+          type: integer
+        averageMs:
+          type: number
+        lastCalledAt:
+          type: ["string", "null"]
+        errorRate:
+          type: number
+
+    # MCP Protocol
+    McpManifest:
+      type: object
+      required: [name, version, tools]
+      properties:
+        name:
+          type: string
+        version:
+          type: string
+        tools:
+          type: array
+          items:
+            $ref: "#/components/schemas/McpToolDefinition"
+
+    McpToolDefinition:
+      type: object
+      required: [name, description, inputSchema]
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        inputSchema:
+          type: object
+          additionalProperties: {}
+
+    McpToolCall:
+      type: object
+      required: [name, arguments]
+      properties:
+        name:
+          type: string
+        arguments:
+          type: object
+          additionalProperties: {}
+
+    McpToolResult:
+      type: object
+      required: [content, isError]
+      properties:
+        content:
+          type: array
+          items:
+            $ref: "#/components/schemas/McpContent"
+        isError:
+          type: boolean
+
+    McpContent:
+      type: object
+      required: [type, text]
+      properties:
+        type:
+          type: string
+        text:
+          type: string

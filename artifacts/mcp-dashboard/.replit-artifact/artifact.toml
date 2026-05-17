@@ -1,0 +1,31 @@
+kind = "web"
+previewPath = "/"
+title = "MCP Server Dashboard"
+version = "1.0.0"
+id = "artifacts/mcp-dashboard"
+router = "path"
+
+[[integratedSkills]]
+name = "react-vite"
+version = "1.0.0"
+
+[[services]]
+name = "web"
+paths = [ "/" ]
+localPort = 18845
+
+[services.development]
+run = "pnpm --filter @workspace/mcp-dashboard run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/mcp-dashboard", "run", "build" ]
+publicDir = "artifacts/mcp-dashboard/dist/public"
+serve = "static"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "18845"
+BASE_PATH = "/"
