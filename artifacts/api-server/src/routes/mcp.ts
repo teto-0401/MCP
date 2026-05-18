@@ -7,32 +7,167 @@ import { randomUUID } from "crypto";
 
 const router: IRouter = Router();
 
-// In-memory SSE session map: sessionId -> Response
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+/** Returns the externally reachable base URL of this server. */
+function getPublicBaseUrl(req: Request): string {
+  // REPLIT_DOMAINS is set in both dev and deployed Replit environments
+  const replitDomain = process.env.REPLIT_DOMAINS?.split(",")[0]?.trim();
+  if (replitDomain) return `https://${replitDomain}`;
+
+  // Fallback: reconstruct from forwarded headers
+  const proto = (req.headers["x-forwarded-proto"] as string | undefined) ?? req.protocol;
+  const host = (req.headers["x-forwarded-host"] as string | undefined) ?? req.headers.host ?? "localhost";
+  return `${proto}://${host}`;
+}
+
+// JSON-RPC helpers
+const jsonRpcOk = (id: unknown, result: unknown) => ({ jsonrpc: "2.0", id, result });
+const jsonRpcErr = (id: unknown, code: number, message: string) => ({ jsonrpc: "2.0", id, error: { code, message } });
+
+// SSE session registry: sessionId -> Response
 const sseSessions = new Map<string, Response>();
 
-// ─── SSE Transport (for Grok / Claude Desktop / MCP clients) ─────────────────
+// ─── MCP Tool dispatcher (shared by all transports) ───────────────────────────
+
+async function handleJsonRpc(msg: {
+  jsonrpc?: string;
+  id?: unknown;
+  method: string;
+  params?: unknown;
+}): Promise<unknown> {
+  const id = msg.id ?? null;
+
+  switch (msg.method) {
+    case "initialize":
+      return jsonRpcOk(id, {
+        protocolVersion: "2024-11-05",
+        capabilities: { tools: { listChanged: false } },
+        serverInfo: { name: "replit-mcp-server", version: "1.0.0" },
+      });
+
+    case "notifications/initialized":
+    case "ping":
+      return jsonRpcOk(id, {});
+
+    case "tools/list": {
+      const tools = Array.from(mcpToolRegistry.values()).map((t) => ({
+        name: t.name,
+        description: t.description,
+        inputSchema: t.inputSchema,
+      }));
+      return jsonRpcOk(id, { tools });
+    }
+
+    case "tools/call": {
+      const { name, arguments: args = {} } = (msg.params ?? {}) as {
+        name: string;
+        arguments?: Record<string, unknown>;
+      };
+
+      const tool = mcpToolRegistry.get(name);
+      if (!tool) return jsonRpcErr(id, -32601, `Tool '${name}' not found`);
+
+      const start = Date.now();
+      try {
+        const result = await dispatchTool(name, args);
+        const duration = Date.now() - start;
+        incrementToolCall(name, duration, false);
+
+        await db.insert(auditLogsTable).values({
+          level: "info",
+          tool: name,
+          message: `MCP tool call: ${name}`,
+          metadata: { args },
+          duration: duration / 1000,
+        }).catch(() => {});
+
+        return jsonRpcOk(id, {
+          content: [{ type: "text", text: typeof result === "string" ? result : JSON.stringify(result, null, 2) }],
+          isError: false,
+        });
+      } catch (err: unknown) {
+        const duration = Date.now() - start;
+        incrementToolCall(name, duration, true);
+        const errMsg = err instanceof Error ? err.message : "Tool error";
+
+        await db.insert(auditLogsTable).values({
+          level: "error",
+          tool: name,
+          message: `MCP tool error: ${name} — ${errMsg}`,
+          metadata: { args },
+          duration: duration / 1000,
+        }).catch(() => {});
+
+        return jsonRpcOk(id, {
+          content: [{ type: "text", text: `Error: ${errMsg}` }],
+          isError: true,
+        });
+      }
+    }
+
+    default:
+      return jsonRpcErr(id, -32601, `Method not found: ${msg.method}`);
+  }
+}
+
+// ─── Transport 1: Streamable HTTP (MCP spec 2025-03-26, supported by Grok) ────
+// Single POST endpoint — no SSE handshake needed. Most modern MCP clients use this.
+
+router.post("/mcp", async (req: Request, res: Response): Promise<void> => {
+  const msg = req.body as { jsonrpc?: string; id?: unknown; method: string; params?: unknown };
+
+  if (!msg || typeof msg.method !== "string") {
+    res.status(400).json(jsonRpcErr(null, -32600, "Invalid Request"));
+    return;
+  }
+
+  try {
+    const result = await handleJsonRpc(msg);
+
+    // If client accepts SSE, respond as SSE stream (for long-running calls)
+    const acceptsSse = req.headers.accept?.includes("text/event-stream");
+    if (acceptsSse) {
+      res.setHeader("Content-Type", "text/event-stream");
+      res.setHeader("Cache-Control", "no-cache, no-transform");
+      res.setHeader("X-Accel-Buffering", "no");
+      res.write(`event: message\ndata: ${JSON.stringify(result)}\n\n`);
+      res.end();
+    } else {
+      res.json(result);
+    }
+  } catch {
+    res.status(500).json(jsonRpcErr(null, -32603, "Internal error"));
+  }
+});
+
+// ─── Transport 2: SSE Transport (legacy MCP clients, Claude Desktop) ──────────
+// GET /api/mcp/sse  → opens SSE stream, sends 'endpoint' event with POST URL
+// POST /api/mcp/messages?sessionId=xxx  → receives JSON-RPC, responds over SSE
 
 router.get("/mcp/sse", (req: Request, res: Response): void => {
   const sessionId = randomUUID();
 
   res.setHeader("Content-Type", "text/event-stream");
-  res.setHeader("Cache-Control", "no-cache");
+  res.setHeader("Cache-Control", "no-cache, no-transform");
   res.setHeader("Connection", "keep-alive");
   res.setHeader("X-Accel-Buffering", "no");
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  // Force chunked encoding so nginx/caddy don't buffer
+  res.setHeader("Transfer-Encoding", "chunked");
   res.flushHeaders();
 
   sseSessions.set(sessionId, res);
 
-  // Tell the client where to POST messages
-  const baseUrl = (req.headers["x-forwarded-proto"] ?? req.protocol) + "://" +
-    (req.headers["x-forwarded-host"] ?? req.headers.host);
+  // Derive the externally reachable URL for the messages endpoint
+  const baseUrl = getPublicBaseUrl(req);
   const messagesUrl = `${baseUrl}/api/mcp/messages?sessionId=${sessionId}`;
   res.write(`event: endpoint\ndata: ${messagesUrl}\n\n`);
 
-  // Keepalive ping every 25 s
+  // Keepalive comment every 20 s to prevent proxy timeouts
   const keepalive = setInterval(() => {
     if (!res.writableEnded) res.write(": ping\n\n");
-  }, 25_000);
+  }, 20_000);
 
   req.on("close", () => {
     clearInterval(keepalive);
@@ -44,126 +179,66 @@ router.post("/mcp/messages", async (req: Request, res: Response): Promise<void> 
   const { sessionId } = req.query as { sessionId?: string };
   const sseRes = sessionId ? sseSessions.get(sessionId) : undefined;
 
-  const msg = req.body as { jsonrpc: string; id: unknown; method: string; params?: unknown };
+  const msg = req.body as { jsonrpc?: string; id?: unknown; method: string; params?: unknown };
 
-  // Helper: send response back over SSE
-  function sendSse(payload: unknown) {
-    const data = JSON.stringify(payload);
-    if (sseRes && !sseRes.writableEnded) {
-      sseRes.write(`event: message\ndata: ${data}\n\n`);
-    }
-    // Also reply on the POST response (some clients read it)
-    if (!res.headersSent) res.json(payload);
-    else res.end();
-  }
-
-  function jsonRpcResult(result: unknown) {
-    return { jsonrpc: "2.0", id: msg.id, result };
-  }
-  function jsonRpcError(code: number, message: string) {
-    return { jsonrpc: "2.0", id: msg.id, error: { code, message } };
+  if (!msg || typeof msg.method !== "string") {
+    res.status(400).end();
+    return;
   }
 
   try {
-    switch (msg.method) {
-      case "initialize": {
-        sendSse(jsonRpcResult({
-          protocolVersion: "2024-11-05",
-          capabilities: { tools: { listChanged: false } },
-          serverInfo: { name: "replit-mcp-server", version: "1.0.0" },
-        }));
-        break;
-      }
-
-      case "notifications/initialized":
-      case "ping": {
-        if (!res.headersSent) res.status(200).end();
-        break;
-      }
-
-      case "tools/list": {
-        const tools = Array.from(mcpToolRegistry.values()).map((t) => ({
-          name: t.name,
-          description: t.description,
-          inputSchema: t.inputSchema,
-        }));
-        sendSse(jsonRpcResult({ tools }));
-        break;
-      }
-
-      case "tools/call": {
-        const { name, arguments: args = {} } = (msg.params ?? {}) as {
-          name: string;
-          arguments?: Record<string, unknown>;
-        };
-
-        const tool = mcpToolRegistry.get(name);
-        if (!tool) {
-          sendSse(jsonRpcError(-32601, `Tool '${name}' not found`));
-          break;
-        }
-
-        const start = Date.now();
-        try {
-          const result = await dispatchTool(name, args);
-          const duration = Date.now() - start;
-          incrementToolCall(name, duration, false);
-
-          await db.insert(auditLogsTable).values({
-            level: "info",
-            tool: name,
-            message: `MCP SSE tool call: ${name}`,
-            metadata: { args },
-            duration: duration / 1000,
-          }).catch(() => {});
-
-          sendSse(jsonRpcResult({
-            content: [{ type: "text", text: typeof result === "string" ? result : JSON.stringify(result, null, 2) }],
-            isError: false,
-          }));
-        } catch (err: unknown) {
-          const duration = Date.now() - start;
-          incrementToolCall(name, duration, true);
-          const errMsg = err instanceof Error ? err.message : "Tool error";
-
-          await db.insert(auditLogsTable).values({
-            level: "error",
-            tool: name,
-            message: `MCP SSE tool error: ${name} — ${errMsg}`,
-            metadata: { args },
-            duration: duration / 1000,
-          }).catch(() => {});
-
-          sendSse(jsonRpcResult({
-            content: [{ type: "text", text: `Error: ${errMsg}` }],
-            isError: true,
-          }));
-        }
-        break;
-      }
-
-      default:
-        sendSse(jsonRpcError(-32601, `Method not found: ${msg.method}`));
+    // Notifications don't get a response
+    if (msg.method === "notifications/initialized") {
+      res.status(202).end();
+      return;
     }
-  } catch (err) {
-    sendSse(jsonRpcError(-32603, "Internal error"));
+
+    const result = await handleJsonRpc(msg);
+    const data = JSON.stringify(result);
+
+    // Push response over the SSE stream
+    if (sseRes && !sseRes.writableEnded) {
+      sseRes.write(`event: message\ndata: ${data}\n\n`);
+    }
+
+    // Also send on the POST response so stateless clients work too
+    res.status(200).json(result);
+  } catch {
+    res.status(500).end();
   }
 });
+
+// ─── REST endpoints (used by the dashboard UI) ────────────────────────────────
 
 router.get("/mcp/tools", async (_req, res): Promise<void> => {
   const tools = Array.from(mcpToolRegistry.values()).map((t) => ({
     name: t.name,
     description: t.description,
+    category: (t as { category?: string }).category,
     inputSchema: t.inputSchema,
+    callCount: (t as { callCount?: number }).callCount ?? 0,
+    averageMs: (() => {
+      const tt = t as { callCount?: number; totalMs?: number };
+      return tt.callCount ? (tt.totalMs ?? 0) / tt.callCount : 0;
+    })(),
+    errorRate: (() => {
+      const tt = t as { callCount?: number; errorCount?: number };
+      return tt.callCount ? (tt.errorCount ?? 0) / tt.callCount : 0;
+    })(),
   }));
-  res.json({
-    name: "replit-mcp-server",
-    version: "1.0.0",
-    tools,
-  });
+  res.json(tools);
 });
 
-router.post("/mcp/tools/call", async (req, res): Promise<void> => {
+router.get("/mcp/manifest", async (_req, res): Promise<void> => {
+  const tools = Array.from(mcpToolRegistry.values()).map((t) => ({
+    name: t.name,
+    description: t.description,
+    inputSchema: t.inputSchema,
+  }));
+  res.json({ name: "replit-mcp-server", version: "1.0.0", tools });
+});
+
+router.post("/mcp/call", async (req, res): Promise<void> => {
   const parsed = CallMcpToolBody.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: parsed.error.message });
@@ -178,14 +253,11 @@ router.post("/mcp/tools/call", async (req, res): Promise<void> => {
   }
 
   const start = Date.now();
-
   try {
-    // Dispatch to internal API handlers
     const result = await dispatchTool(name, args);
     const duration = Date.now() - start;
     incrementToolCall(name, duration, false);
 
-    // Log the tool call
     await db.insert(auditLogsTable).values({
       level: "info",
       tool: name,
@@ -218,8 +290,9 @@ router.post("/mcp/tools/call", async (req, res): Promise<void> => {
   }
 });
 
+// ─── Tool dispatcher ───────────────────────────────────────────────────────────
+
 async function dispatchTool(name: string, args: Record<string, unknown>): Promise<unknown> {
-  // Dynamically dispatch to internal route logic
   const baseUrl = `http://localhost:${process.env.PORT}/api`;
 
   switch (name) {
