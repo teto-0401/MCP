@@ -1,10 +1,154 @@
-import { Router, type IRouter } from "express";
+import { Router, type IRouter, type Request, type Response } from "express";
 import { mcpToolRegistry } from "../lib/mcpTools";
 import { incrementToolCall } from "../lib/serverMetrics";
 import { db, auditLogsTable } from "@workspace/db";
 import { CallMcpToolBody } from "@workspace/api-zod";
+import { randomUUID } from "crypto";
 
 const router: IRouter = Router();
+
+// In-memory SSE session map: sessionId -> Response
+const sseSessions = new Map<string, Response>();
+
+// ─── SSE Transport (for Grok / Claude Desktop / MCP clients) ─────────────────
+
+router.get("/mcp/sse", (req: Request, res: Response): void => {
+  const sessionId = randomUUID();
+
+  res.setHeader("Content-Type", "text/event-stream");
+  res.setHeader("Cache-Control", "no-cache");
+  res.setHeader("Connection", "keep-alive");
+  res.setHeader("X-Accel-Buffering", "no");
+  res.flushHeaders();
+
+  sseSessions.set(sessionId, res);
+
+  // Tell the client where to POST messages
+  const baseUrl = (req.headers["x-forwarded-proto"] ?? req.protocol) + "://" +
+    (req.headers["x-forwarded-host"] ?? req.headers.host);
+  const messagesUrl = `${baseUrl}/api/mcp/messages?sessionId=${sessionId}`;
+  res.write(`event: endpoint\ndata: ${messagesUrl}\n\n`);
+
+  // Keepalive ping every 25 s
+  const keepalive = setInterval(() => {
+    if (!res.writableEnded) res.write(": ping\n\n");
+  }, 25_000);
+
+  req.on("close", () => {
+    clearInterval(keepalive);
+    sseSessions.delete(sessionId);
+  });
+});
+
+router.post("/mcp/messages", async (req: Request, res: Response): Promise<void> => {
+  const { sessionId } = req.query as { sessionId?: string };
+  const sseRes = sessionId ? sseSessions.get(sessionId) : undefined;
+
+  const msg = req.body as { jsonrpc: string; id: unknown; method: string; params?: unknown };
+
+  // Helper: send response back over SSE
+  function sendSse(payload: unknown) {
+    const data = JSON.stringify(payload);
+    if (sseRes && !sseRes.writableEnded) {
+      sseRes.write(`event: message\ndata: ${data}\n\n`);
+    }
+    // Also reply on the POST response (some clients read it)
+    if (!res.headersSent) res.json(payload);
+    else res.end();
+  }
+
+  function jsonRpcResult(result: unknown) {
+    return { jsonrpc: "2.0", id: msg.id, result };
+  }
+  function jsonRpcError(code: number, message: string) {
+    return { jsonrpc: "2.0", id: msg.id, error: { code, message } };
+  }
+
+  try {
+    switch (msg.method) {
+      case "initialize": {
+        sendSse(jsonRpcResult({
+          protocolVersion: "2024-11-05",
+          capabilities: { tools: { listChanged: false } },
+          serverInfo: { name: "replit-mcp-server", version: "1.0.0" },
+        }));
+        break;
+      }
+
+      case "notifications/initialized":
+      case "ping": {
+        if (!res.headersSent) res.status(200).end();
+        break;
+      }
+
+      case "tools/list": {
+        const tools = Array.from(mcpToolRegistry.values()).map((t) => ({
+          name: t.name,
+          description: t.description,
+          inputSchema: t.inputSchema,
+        }));
+        sendSse(jsonRpcResult({ tools }));
+        break;
+      }
+
+      case "tools/call": {
+        const { name, arguments: args = {} } = (msg.params ?? {}) as {
+          name: string;
+          arguments?: Record<string, unknown>;
+        };
+
+        const tool = mcpToolRegistry.get(name);
+        if (!tool) {
+          sendSse(jsonRpcError(-32601, `Tool '${name}' not found`));
+          break;
+        }
+
+        const start = Date.now();
+        try {
+          const result = await dispatchTool(name, args);
+          const duration = Date.now() - start;
+          incrementToolCall(name, duration, false);
+
+          await db.insert(auditLogsTable).values({
+            level: "info",
+            tool: name,
+            message: `MCP SSE tool call: ${name}`,
+            metadata: { args },
+            duration: duration / 1000,
+          }).catch(() => {});
+
+          sendSse(jsonRpcResult({
+            content: [{ type: "text", text: typeof result === "string" ? result : JSON.stringify(result, null, 2) }],
+            isError: false,
+          }));
+        } catch (err: unknown) {
+          const duration = Date.now() - start;
+          incrementToolCall(name, duration, true);
+          const errMsg = err instanceof Error ? err.message : "Tool error";
+
+          await db.insert(auditLogsTable).values({
+            level: "error",
+            tool: name,
+            message: `MCP SSE tool error: ${name} — ${errMsg}`,
+            metadata: { args },
+            duration: duration / 1000,
+          }).catch(() => {});
+
+          sendSse(jsonRpcResult({
+            content: [{ type: "text", text: `Error: ${errMsg}` }],
+            isError: true,
+          }));
+        }
+        break;
+      }
+
+      default:
+        sendSse(jsonRpcError(-32601, `Method not found: ${msg.method}`));
+    }
+  } catch (err) {
+    sendSse(jsonRpcError(-32603, "Internal error"));
+  }
+});
 
 router.get("/mcp/tools", async (_req, res): Promise<void> => {
   const tools = Array.from(mcpToolRegistry.values()).map((t) => ({
