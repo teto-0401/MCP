@@ -5,4 +5,7 @@ services:
     buildCommand: pnpm install && pnpm --filter @workspace/mcp-dashboard run build
     startCommand: pnpm --filter @workspace/mcp-dashboard run serve
     rootDir: artifacts/mcp-dashboard
+    envVars:
+      - key: BASE_PATH
+        value: /
     pullRequestPreviewsEnabled: false
