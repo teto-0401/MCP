@@ -9,6 +9,22 @@ import "./lib/mcpTools"; // ensure tools are registered on startup
 
 const app: Express = express();
 
+app.get("/", (_req, res) => {
+  res.type("html").send(`<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Replit MCP Server</title>
+  </head>
+  <body>
+    <h1>Replit MCP Server</h1>
+    <p>Health: <a href="/api/healthz">/api/healthz</a></p>
+    <p>MCP Manifest: <a href="/api/mcp/manifest">/api/mcp/manifest</a></p>
+  </body>
+</html>`);
+});
+
 app.use(
   pinoHttp({
     logger,
