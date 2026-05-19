@@ -1,0 +1,7 @@
+services:
+  - type: web
+    name: mcp-dashboard
+    runtime: static
+    buildCommand: pnpm install && pnpm --filter @workspace/mcp-dashboard run build
+    staticPublishPath: artifacts/mcp-dashboard/dist/public
+    pullRequestPreviewsEnabled: false
