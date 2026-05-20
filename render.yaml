@@ -7,6 +7,4 @@ services:
     envVars:
       - key: PORT
         value: 10000
-      - key: DATABASE_URL
-        sync: false
     pullRequestPreviewsEnabled: false
