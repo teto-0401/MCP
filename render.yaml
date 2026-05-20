@@ -1,27 +1,12 @@
 services:
   - type: web
-    name: mcp-api-server
+    name: mcp-dashboard
     runtime: node
-    buildCommand: pnpm install && pnpm --filter @workspace/api-server run build
+    buildCommand: BASE_PATH=/ pnpm install && pnpm --filter @workspace/mcp-dashboard run build && pnpm --filter @workspace/api-server run build
     startCommand: pnpm --filter @workspace/api-server run start
     envVars:
       - key: PORT
         value: 10000
       - key: DATABASE_URL
-        sync: false
-    pullRequestPreviewsEnabled: false
-
-  - type: web
-    name: mcp-dashboard
-    runtime: node
-    buildCommand: pnpm install && pnpm --filter @workspace/mcp-dashboard run build
-    startCommand: pnpm --filter @workspace/mcp-dashboard run serve
-    rootDir: artifacts/mcp-dashboard
-    envVars:
-      - key: BASE_PATH
-        value: /
-      - key: PORT
-        value: 10000
-      - key: VITE_API_BASE_URL
         sync: false
     pullRequestPreviewsEnabled: false
