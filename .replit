@@ -32,4 +32,5 @@ localPort = 18845
 externalPort = 3000
 
 [nix]
+channel = "nixpkgs-24_11"
 packages = ["chromium"]
