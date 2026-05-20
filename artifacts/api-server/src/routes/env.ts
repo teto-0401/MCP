@@ -6,6 +6,7 @@ import { GetEnvVarParams, SetEnvVarParams, SetEnvVarBody } from "@workspace/api-
 const router: IRouter = Router();
 
 router.get("/env", async (_req, res): Promise<void> => {
+  if (!db) { res.json([]); return; }
   const vars = await db.select().from(envVarsTable).orderBy(envVarsTable.key);
   res.json(
     vars.map((v) => ({
@@ -18,6 +19,7 @@ router.get("/env", async (_req, res): Promise<void> => {
 });
 
 router.get("/env/:key", async (req, res): Promise<void> => {
+  if (!db) { res.status(503).json({ error: "Database not configured" }); return; }
   const raw = Array.isArray(req.params.key) ? req.params.key[0] : req.params.key;
   const parsed = GetEnvVarParams.safeParse({ key: raw });
   if (!parsed.success) {
@@ -33,6 +35,7 @@ router.get("/env/:key", async (req, res): Promise<void> => {
 });
 
 router.put("/env/:key", async (req, res): Promise<void> => {
+  if (!db) { res.status(503).json({ error: "Database not configured" }); return; }
   const rawKey = Array.isArray(req.params.key) ? req.params.key[0] : req.params.key;
   const keyParsed = SetEnvVarParams.safeParse({ key: rawKey });
   if (!keyParsed.success) {
@@ -61,6 +64,7 @@ router.put("/env/:key", async (req, res): Promise<void> => {
 });
 
 router.delete("/env/:key", async (req, res): Promise<void> => {
+  if (!db) { res.status(503).json({ error: "Database not configured" }); return; }
   const raw = Array.isArray(req.params.key) ? req.params.key[0] : req.params.key;
   const parsed = GetEnvVarParams.safeParse({ key: raw });
   if (!parsed.success) {

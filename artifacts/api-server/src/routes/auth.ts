@@ -16,6 +16,7 @@ function generateKey(): string {
 }
 
 router.get("/auth/keys", async (_req, res): Promise<void> => {
+  if (!db) { res.status(503).json({ error: "Database not configured" }); return; }
   const keys = await db.select().from(apiKeysTable).orderBy(apiKeysTable.createdAt);
   res.json(
     keys.map((k) => ({
@@ -32,6 +33,7 @@ router.get("/auth/keys", async (_req, res): Promise<void> => {
 });
 
 router.post("/auth/keys", async (req, res): Promise<void> => {
+  if (!db) { res.status(503).json({ error: "Database not configured" }); return; }
   const parsed = CreateApiKeyBody.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: parsed.error.message });
@@ -61,6 +63,7 @@ router.post("/auth/keys", async (req, res): Promise<void> => {
 });
 
 router.delete("/auth/keys/:keyId", async (req, res): Promise<void> => {
+  if (!db) { res.status(503).json({ error: "Database not configured" }); return; }
   const raw = Array.isArray(req.params.keyId) ? req.params.keyId[0] : req.params.keyId;
   const [deleted] = await db.delete(apiKeysTable).where(eq(apiKeysTable.id, raw)).returning();
   if (!deleted) {

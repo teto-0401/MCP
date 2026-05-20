@@ -25,6 +25,7 @@ router.get("/monitoring/connections", async (_req, res): Promise<void> => {
 });
 
 router.get("/monitoring/rate-limits", async (_req, res): Promise<void> => {
+  if (!db) { res.json([]); return; }
   const now = Date.now();
   const WINDOW_SECONDS = 60;
   const LIMIT = 100;

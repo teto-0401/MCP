@@ -2,11 +2,14 @@ import { Router, type IRouter } from "express";
 import { db, auditLogsTable } from "@workspace/db";
 import { eq, desc, and, gte, sql } from "drizzle-orm";
 import { ListLogsQueryParams } from "@workspace/api-zod";
-import { v4 as uuidv4 } from "uuid";
 
 const router: IRouter = Router();
 
 router.get("/logs", async (req, res): Promise<void> => {
+  if (!db) {
+    res.json({ entries: [], total: 0, limit: 100, offset: 0 });
+    return;
+  }
   const parsed = ListLogsQueryParams.safeParse(req.query);
   if (!parsed.success) {
     res.status(400).json({ error: parsed.error.message });

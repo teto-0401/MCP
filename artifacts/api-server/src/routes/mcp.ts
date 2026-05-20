@@ -74,7 +74,7 @@ async function handleJsonRpc(msg: {
         const duration = Date.now() - start;
         incrementToolCall(name, duration, false);
 
-        await db.insert(auditLogsTable).values({
+        if (db) await db.insert(auditLogsTable).values({
           level: "info",
           tool: name,
           message: `MCP tool call: ${name}`,
@@ -91,7 +91,7 @@ async function handleJsonRpc(msg: {
         incrementToolCall(name, duration, true);
         const errMsg = err instanceof Error ? err.message : "Tool error";
 
-        await db.insert(auditLogsTable).values({
+        if (db) await db.insert(auditLogsTable).values({
           level: "error",
           tool: name,
           message: `MCP tool error: ${name} — ${errMsg}`,
@@ -258,7 +258,7 @@ router.post("/mcp/call", async (req, res): Promise<void> => {
     const duration = Date.now() - start;
     incrementToolCall(name, duration, false);
 
-    await db.insert(auditLogsTable).values({
+    if (db) await db.insert(auditLogsTable).values({
       level: "info",
       tool: name,
       message: `MCP tool call: ${name}`,
@@ -275,7 +275,7 @@ router.post("/mcp/call", async (req, res): Promise<void> => {
     incrementToolCall(name, duration, true);
     const msg = err instanceof Error ? err.message : "Tool call failed";
 
-    await db.insert(auditLogsTable).values({
+    if (db) await db.insert(auditLogsTable).values({
       level: "error",
       tool: name,
       message: `MCP tool error: ${name} — ${msg}`,
